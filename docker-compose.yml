@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database (required)
+  postgres:
+    image: postgres:16
+    container_name: job_tracker_db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-job_tracker}
+      POSTGRES_USER: ${POSTGRES_USER:-job_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - job_tracker_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # Backend API (FastAPI)
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: job_tracker_backend
+    env_file:
+      - ./backend/.env
+    environment:
+      # Modern SQLAlchemy + Psycopg3 URL (note: no stray brace at the end)
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://${POSTGRES_USER:-job_user}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-job_tracker}}
+      APP_ENV: ${APP_ENV:-development}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - job_tracker_network
+    volumes:
+      - ./backend:/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    restart: unless-stopped
+
+  # (Optional) Frontend — include only if you want to run the UI via compose now
+  # frontend:
+  #   build:
+  #     context: ./frontend
+  #     dockerfile: Dockerfile
+  #   container_name: job_tracker_frontend
+  #   environment:
+  #     NEXT_PUBLIC_API_BASE: ${NEXT_PUBLIC_API_BASE:-http://localhost:8000}
+  #   ports:
+  #     - "3000:3000"
+  #   depends_on:
+  #     backend:
+  #       condition: service_started
+  #   networks:
+  #     - job_tracker_network
+  #   volumes:
+  #     - ./frontend:/app
+  #     - /app/node_modules
+  #   command: npm start
+  #   restart: unless-stopped
+
+volumes:
+  postgres_data:
+
+networks:
+  job_tracker_network:
+    driver: bridge
